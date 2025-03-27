@@ -1,0 +1,131 @@
+---
+- hosts: build_host
+  become: true
+  vars:
+    project_name: test_conflicts
+    project_version: "1.0.0"
+    build_dir: "/tmp/build"
+    rpm_output_dir: "/tmp/build/rpm"
+    openssl_111_version: "1.1.1w"
+    openssl_30_version: "3.0.11"
+
+  tasks:
+    - name: Ensure required packages are installed
+      package:
+        name:
+          - docker
+          - python3-pip
+          # - rpm-build
+          # - rpmdevtools
+          - cmake
+          # - gcc-c++
+        state: present
+
+    - name: Start and enable Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Install Docker Python library
+      pip:
+        name: docker
+        state: present
+
+    - name: Create build directory
+      file:
+        path: "{{ build_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Create RPM output directory
+      file:
+        path: "{{ rpm_output_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Copy source files
+      copy:
+        src: "{{ playbook_dir }}/files/{{ item }}"
+        dest: "{{ build_dir }}"
+      with_items:
+        - app-a
+        - app-b
+        - scripts
+    - name: Download OpenSSL sources
+      get_url:
+        url: "https://www.openssl.org/source/openssl-{{ item }}.tar.gz"
+        dest: "{{ build_dir }}/openssl-{{ item }}.tar.gz"
+      loop:
+        - "{{ openssl_111_version }}"
+        - "{{ openssl_30_version }}"
+
+    - name: Extract OpenSSL sources
+      unarchive:
+        src: "{{ build_dir }}/openssl-{{ item }}.tar.gz"
+        dest: "{{ build_dir }}"
+      loop:
+        - "{{ openssl_111_version }}"
+        - "{{ openssl_30_version }}"
+
+    - name: Create Build Dockerfile
+      template:
+        src: templates/Dockerfile.build.j2
+        dest: "{{ build_dir }}/Dockerfile.build"
+
+    - name: Create Test Dockerfile
+      template:
+        src: templates/Dockerfile.j2
+        dest: "{{ build_dir }}/Dockerfile.test"
+
+    - name: Build Docker image for compilation
+      docker_image:
+        build:
+          path: "{{ build_dir }}"
+          dockerfile: Dockerfile.build
+        name: "{{ project_name }}_builder"
+        source: build
+        state: present
+
+    - name: Compile and Package in Container
+      docker_container:
+        name: "{{ project_name }}_compile"
+        image: "{{ project_name }}_builder"
+        command: /build/scripts/build-all.sh
+        volumes:
+          - "{{ build_dir }}:/build"
+        auto_remove: yes
+        state: started
+
+    - name: Fetch RPM Package
+      fetch:
+        src: "{{ rpm_output_dir }}/{{ project_name }}-{{ project_version }}-1.x86_64.rpm"
+        dest: "{{ playbook_dir }}/../dist/"
+        flat: yes
+
+    - name: Build Test Docker Image
+      docker_image:
+        build:
+          path: "{{ build_dir }}"
+          dockerfile: Dockerfile.test
+        name: "{{ project_name }}_test"
+        source: build
+        state: present
+
+    - name: Run RPM Installation Test
+      docker_container:
+        name: "{{ project_name }}_installation_test"
+        image: "{{ project_name }}_test"
+        command: rpm -ivh /packages/{{ project_name }}-{{ project_version }}-1.x86_64.rpm
+        volumes:
+          - "{{ rpm_output_dir }}:/packages"
+        auto_remove: yes
+        state: started
+
+    - name: Verify Application Functionality
+      docker_container:
+        name: "{{ project_name }}_functional_test"
+        image: "{{ project_name }}_test"
+        command: /usr/bin/{{ project_name }}
+        auto_remove: yes
+        state: started

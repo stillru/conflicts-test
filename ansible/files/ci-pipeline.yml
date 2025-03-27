@@ -1,0 +1,39 @@
+name: Library Dependency Conflict Detection
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  detect-conflicts:
+    runs-on: ubuntu-latest
+    container: 
+      image: rockylinux:9
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        dnf update -y
+        dnf install -y rpm-build gcc make openssl-devel patchelf
+
+    - name: Build test packages
+      run: |
+        rpmbuild -ba apps/app-a/app-a.spec
+        rpmbuild -ba apps/app-b/app-b.spec
+
+    - name: Check library conflicts
+      run: ./check-conflicts.sh
+
+    - name: Attempt library repackaging
+      run: ./library-repack.sh
+
+    - name: Verify applications
+      run: |
+        rpm -i ~/rpmbuild/RPMS/*/app-a-*.rpm
+        rpm -i ~/rpmbuild/RPMS/*/app-b-*.rpm
+        /usr/bin/app-a
+        /usr/bin/app-b

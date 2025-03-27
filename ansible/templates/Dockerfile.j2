@@ -1,0 +1,18 @@
+FROM rockylinux:9
+
+# Copy conflict check and test scripts
+COPY build/scripts /scripts
+RUN chmod +x /scripts/*
+
+# Create test script
+RUN echo '#!/bin/bash' > /test-apps.sh && \
+    echo 'set -e' >> /test-apps.sh && \
+    echo 'rpm -ivh /packages/app-a-*.rpm' >> /test-apps.sh && \
+    echo 'rpm -ivh /packages/app-b-*.rpm' >> /test-apps.sh && \
+    echo 'which app-a' >> /test-apps.sh && \
+    echo 'which app-b' >> /test-apps.sh && \
+    echo 'app-a' >> /test-apps.sh && \
+    echo 'app-b' >> /test-apps.sh && \
+    chmod +x /test-apps.sh
+
+CMD ["/bin/bash"]
